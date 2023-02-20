@@ -1,3 +1,4 @@
 pin*/
 *.out
 tracer/obj-intel64
+scratch/

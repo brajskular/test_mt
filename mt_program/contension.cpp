@@ -17,7 +17,6 @@ int **arrayC;
 
 int counter = 0;
 
-/*
 void matrixMultiplication()
 {
     lock.lock();
@@ -44,25 +43,23 @@ void matrixMultiplication()
     }
     
 }
-*/
+
 void spawnThreads()
 {
-    printf("spawn threads\n");
-    // thread t1(matrixMultiplication);
-    // thread t2(matrixMultiplication);
-    // thread t3(matrixMultiplication);
+    thread t1(matrixMultiplication);
+    thread t2(matrixMultiplication);
+    thread t3(matrixMultiplication);
     
-    // t1.join();
-    // t2.join();
-    // t3.join();    
-    return;
+    t1.join();
+    t2.join();
+    t3.join();    
 }
 
 int main() 
 {
     printf("Multi-threaded application for matrix multiplication with contension.\n");   
     
-    // printf("Lock memory location: %lx\n", (unsigned long)&lock);
+    printf("Lock memory location: %lx\n", (unsigned long)&lock);
 
     // init
     arrayA = new int*[DIMENSION];
@@ -96,12 +93,12 @@ int main()
     }
 
     thread t1(spawnThreads);
-    // thread t2(spawnThreads);
-    // thread t3(spawnThreads);
+    thread t2(spawnThreads);
+    thread t3(spawnThreads);
     
     t1.join();
-    // t2.join();
-    // t3.join();
+    t2.join();
+    t3.join();
 
     // free memory
     for (int i = 0; i < DIMENSION; i++)

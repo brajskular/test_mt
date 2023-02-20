@@ -131,8 +131,6 @@ static  TLS_KEY mlog_key = INVALID_TLS_KEY;
 
 ofstream threadDependency;
 
-// ofstream syncContructRecord;
-
 struct ThreadDependencyNode
 {
     UINT64 threadPINID;
@@ -326,8 +324,9 @@ void MLOG::insertSpaceInThreadCreation()
 
 void MLOG::popSpaceInThreadCreation(UINT64 parent, UINT64 child)
 {
-    PIN_MutexLock(&threadLockMutex);
+    PIN_MutexLock(&threadLockMutex);    
     ThreadDependencyNode* tmpp = threadDependencyNode;
+    cout << "there 5" << endl;
     threadDependencyNode = threadDependencyNode->next;
 
     insertThreadDependencyDB(child, parent, tmpp->instructionNumber, insNum);
@@ -618,19 +617,19 @@ void Instruction(INS ins, VOID *v)
 void ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
 {   
     // Insert <OS thread ID, PIN thread ID> into thread ID mapping DB
-    // insertThreadMapDB(PIN_GetTid(), tid);
+    insertThreadMapDB(PIN_GetTid(), tid);
+cout << "Thread " << tid << " created"  << endl;
+    MLOG * mlog = new MLOG;
 
-    // MLOG * mlog = new MLOG;
-
-    // // Set the parent thread ID
-    // if (tid != 0)
-    // {
-    //     mlog->parentThreadID = queryThreadMapDB(PIN_GetParentTid());
-    // }
-    // else
-    // {
-    //     mlog->parentThreadID = 0;
-    // }
+    // Set the parent thread ID
+    if (tid != 0)
+    {
+        mlog->parentThreadID = queryThreadMapDB(PIN_GetParentTid());
+    }
+    else
+    {
+        mlog->parentThreadID = 0;
+    }
     
     // const string traceFileName = "named_pipe_" + decstr(tid); // + decstr(getpid()) + "."
     // mlog->traceFile = fopen(traceFileName.c_str(), "ab");
@@ -641,52 +640,46 @@ void ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
     //     exit(1);
     // }
 
-    // mlog->libCounter = 0;
+    mlog->insNum = 0;    
 
-    // mlog->insNum = 0;    
+    mlog->pthread_create_counter = 0;
 
-    // mlog->pthread_create_counter = 0;
+    mlog->running_child_thread_counter = 0;
 
-    // mlog->running_child_thread_counter = 0;
+    PIN_MutexInit(&mlog->threadLockMutex);
 
-    // PIN_MutexInit(&mlog->threadLockMutex);
+    if (tid != 0)
+    {
+        MLOG* parentMlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, mlog->parentThreadID));
+cout << "there" << endl;
+        cout << "Thread " << tid << " started by thread " << mlog->parentThreadID << endl; //<< " at instruction " << parentMlog->insNum << endl;  
+cout << "there 1" << endl;
+        parentMlog->popSpaceInThreadCreation(mlog->parentThreadID, tid);
+cout << "there 2" << endl;
+    }
 
-    // if (tid != 0)
-    // {
-    //     MLOG* parentMlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, mlog->parentThreadID));
+    mlog->threadDependencyNode = NULL;
 
-    //     // cout << "Thread " << tid << " started by thread " << mlog->parentThreadID << " at instruction " << parentMlog->insNum << endl;  
+    mlog->child_thread_record_root_node = NULL;
 
-    //     parentMlog->popSpaceInThreadCreation(mlog->parentThreadID, tid);
-    // }
-
-    // mlog->threadDependencyNode = NULL;
-
-    // mlog->child_thread_record_root_node = NULL;
-
-    // // PIN_MutexInit(&mlog->threadLockMutex);
-
-    // // A thread will need to look up its MLOG, so save pointer in TLS    
-    // if (PIN_SetThreadData(mlog_key, mlog, tid) == FALSE)
-    // {
-    //     cerr << "PIN_SetThreadData failed" << endl;
-    //     PIN_ExitProcess(1);
-    // }      
-
-    cout << "Thread " << tid << " created"  << endl;
+    // A thread will need to look up its MLOG, so save pointer in TLS    
+    if (PIN_SetThreadData(mlog_key, mlog, tid) == FALSE)
+    {
+        cerr << "PIN_SetThreadData failed" << endl;
+        PIN_ExitProcess(1);
+    }    
 }
 
 void ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
 {       
-    cout << "Thread " << tid << " finished"  << endl;
     // MLOG * mlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, tid));
 
     // volatile MLOG * parentMlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, mlog->parentThreadID));
 
-    // // cout
-    // // << "Thread " << setw(5) << tid 
-    // // << " finished when thread " << setw(5) << mlog->parentThreadID 
-    // // << " reaches instruction " << setw(12) << dec << parentMlog->insNum << endl;
+    // // // cout
+    // // // << "Thread " << setw(5) << tid 
+    // // // << " finished when thread " << setw(5) << mlog->parentThreadID 
+    // // // << " reaches instruction " << setw(12) << dec << parentMlog->insNum << endl;
 
     // if (tid != 0)
     // {
@@ -698,11 +691,13 @@ void ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
     //     // << " reaches instruction " << setw(12) << dec << parentMlog->insNum << endl;
     // }   
     
-    // fclose(mlog->traceFile);    
+    // // fclose(mlog->traceFile);    
 
-    // cout << "Thread " << setw(5) << tid << " finishes after " << setw(10) << mlog->insNum << " instructions" << endl;
+    // // cout << "Thread " << setw(5) << tid << " finishes after " << setw(10) << mlog->insNum << " instructions" << endl;
 
     // delete mlog;
+
+    cout << "Thread " << tid << " finished"  << endl;
 }
 
 VOID processArgumentPThreadCreate(CHAR * name, ADDRINT *ptr) // unsigned long*
@@ -810,54 +805,52 @@ void Fini(INT32 code, VOID *v)
 {   
     cout << "Program finished" << endl;
     // Dump the thread dependency information
-    // cout << "============================================================================================================" << endl;
+    cout << "============================================================================================================" << endl;
 
-    // cout << "Child Thread    Parent Thread    pthread_create at    Thread Start    Thread Terminate    #Instructions Run" << endl;
+    cout << "Child Thread    Parent Thread    pthread_create at    Thread Start    Thread Terminate    #Instructions Run" << endl;
 
-    // cout << "------------------------------------------------------------------------------------------------------------" << endl;
+    cout << "------------------------------------------------------------------------------------------------------------" << endl;
 
-    // threadDependency << "Child Thread    Parent Thread    pthread_create at    Thread Start    Thread Terminate    #Instructions Run" << endl;
+    threadDependency << "Child Thread    Parent Thread    pthread_create at    Thread Start    Thread Terminate    #Instructions Run" << endl;
 
-    // threadDependency << "------------------------------------------------------------------------------------------------------------" << endl;
+    threadDependency << "------------------------------------------------------------------------------------------------------------" << endl;
     
-    // map<UINT64, threadDependencyRecord>::iterator itR;
-    // for (itR = threadDependencyDB.begin(); itR != threadDependencyDB.end(); ++itR) {
-    //     cout << setw(12) << itR->first << "    " 
-    //     << setw(13) << itR->second.parentThread << "    "
-    //     << setw(17) << itR->second.pthreadCreateTime << "    "
-    //     << setw(12) << itR->second.startTime << "    "
-    //     << setw(16) << itR->second.terminateTime  << "    "
-    //     << setw(17) << itR->second.insCount << endl;
+    map<UINT64, threadDependencyRecord>::iterator itR;
+    for (itR = threadDependencyDB.begin(); itR != threadDependencyDB.end(); ++itR) {
+        cout << setw(12) << itR->first << "    " 
+        << setw(13) << itR->second.parentThread << "    "
+        << setw(17) << itR->second.pthreadCreateTime << "    "
+        << setw(12) << itR->second.startTime << "    "
+        << setw(16) << itR->second.terminateTime  << "    "
+        << setw(17) << itR->second.insCount << endl;
 
-    //     threadDependency << setw(12) << itR->first << "    " 
-    //     << setw(13) << itR->second.parentThread << "    "
-    //     << setw(17) << itR->second.pthreadCreateTime << "    "
-    //     << setw(12) << itR->second.startTime << "    "
-    //     << setw(16) << itR->second.terminateTime  << "    "
-    //     << setw(17) << itR->second.insCount << endl;
-    // }
+        threadDependency << setw(12) << itR->first << "    " 
+        << setw(13) << itR->second.parentThread << "    "
+        << setw(17) << itR->second.pthreadCreateTime << "    "
+        << setw(12) << itR->second.startTime << "    "
+        << setw(16) << itR->second.terminateTime  << "    "
+        << setw(17) << itR->second.insCount << endl;
+    }
 
-    // threadDependency.close();
+    threadDependency.close();
 
-    // // syncContructRecord.close();
+    map<UINT64, UINT64>::iterator itr;
 
-    // map<UINT64, UINT64>::iterator itr;
+    cout << "============================================================================================================" << endl;
 
-    // cout << "============================================================================================================" << endl;
+    cout << "OS thread ID    PIN thread ID " << endl;
 
-    // cout << "OS thread ID    PIN thread ID " << endl;
+    cout << "------------------------------------------------------------------------------------------------------------" << endl;
 
-    // cout << "------------------------------------------------------------------------------------------------------------" << endl;
+    for (itr = threadMapDB.begin(); itr != threadMapDB.end(); ++itr) {
+        cout << setw(12) << itr->first << "    " << setw(13) << itr->second << '\n';
+    }
 
-    // for (itr = threadMapDB.begin(); itr != threadMapDB.end(); ++itr) {
-    //     cout << setw(12) << itr->first << "    " << setw(13) << itr->second << '\n';
-    // }
+    cout << "============================================================================================================" << endl;
 
-    // cout << "============================================================================================================" << endl;
+    cout << "Parent thread ID  pthread_create order  start_thread order  Thread ID" << endl;
 
-    // cout << "Parent thread ID  pthread_create order  start_thread order  Thread ID" << endl;
-
-    // cout << "------------------------------------------------------------------------------------------------------------" << endl;
+    cout << "------------------------------------------------------------------------------------------------------------" << endl;
 
     // for (itr = threadMapDB.begin(); itr != threadMapDB.end(); ++itr) {
     //     MLOG *mlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, itr->second));
@@ -879,9 +872,9 @@ void Fini(INT32 code, VOID *v)
         
     // }
 
-    // cout << "============================================================================================================" << endl;
+    cout << "============================================================================================================" << endl;
 
-    // cout << "The end!" << endl;  
+    cout << "The end!" << endl;  
 }
 
 int main(int argc, char *argv[])
@@ -892,24 +885,20 @@ int main(int argc, char *argv[])
     if (PIN_Init(argc, argv)) return Usage();
 
     // Initialize thread-specific data not handled by buffering api.
-    // mlog_key = PIN_CreateThreadDataKey(NULL);    
-    // if (mlog_key == INVALID_TLS_KEY)
-    // {
-    //     cerr << "number of already allocated keys reached the MAX_CLIENT_TLS_KEYS limit" << endl;
-    //     PIN_ExitProcess(1);
-    // }
+    mlog_key = PIN_CreateThreadDataKey(NULL);    
+    if (mlog_key == INVALID_TLS_KEY)
+    {
+        cerr << "number of already allocated keys reached the MAX_CLIENT_TLS_KEYS limit" << endl;
+        PIN_ExitProcess(1);
+    }
 
-    // PIN_InitLock(&lock);
+    PIN_InitLock(&lock);
 
-    // cout << "Size of MLOG = " << sizeof(MLOG) << endl;
+    cout << "Size of MLOG = " << sizeof(MLOG) << endl;
 
     // Initialize the thread dependency file
-    // const string threadDependencyFileName = KnobOutputFile.Value() + ".Dependency";
-    // threadDependency.open(threadDependencyFileName.c_str());
-
-    // Initialize the file that records the synchronization constructs
-    // const string syncContructRecordFileName = KnobOutputFile.Value() + ".sync";
-    // syncContructRecord.open(syncContructRecordFileName.c_str());
+    const string threadDependencyFileName = KnobOutputFile.Value() + ".Dependency";
+    threadDependency.open(threadDependencyFileName.c_str());
 
     // Add callbacks
     PIN_AddThreadStartFunction(ThreadStart, NULL);
@@ -919,7 +908,7 @@ int main(int argc, char *argv[])
 
     PIN_AddFiniFunction(Fini, NULL); 
 
-    // IMG_AddInstrumentFunction(Image, 0);
+    IMG_AddInstrumentFunction(Image, 0);
 
     // Start the program, never returns
     PIN_StartProgram();

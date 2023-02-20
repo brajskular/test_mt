@@ -18,6 +18,14 @@ using std::cerr;
 using std::string;
 using std::endl;
 
+struct threadDependencyRecord
+{
+    UINT64 parentThread;
+    UINT64 startTime;
+    UINT64 terminateTime;
+    UINT64 insCount;
+};
+
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool",
     "o", "", "specify output file name");
 
