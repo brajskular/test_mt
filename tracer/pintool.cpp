@@ -18,6 +18,9 @@ using std::cerr;
 using std::string;
 using std::endl;
 
+// key for accessing TLS storage in the threads. initialized once in main()
+static  TLS_KEY mlog_key = INVALID_TLS_KEY;
+
 struct ThreadDependencyNode
 {
     UINT64 threadPINID;
@@ -79,13 +82,11 @@ class MLOG
 
     UINT32 threadCounter;
 
-    PIN_MUTEX threadLockMutex;
-
-    UINT32 pthread_create_counter;
-
-    UINT32 running_child_thread_counter;
+    PIN_MUTEX threadLockMutex;    
 
     child_thread_record_node *child_thread_record_root_node;
+
+    UINT64 osid;
 
     UINT8 _pad[PAD_SIZE];
 
@@ -115,8 +116,7 @@ void MLOG::insertChildThreadRecordNode(
     if (child_thread_record_root_node == NULL)
     {
         child_thread_record_root_node = new child_thread_record_node;
-        child_thread_record_root_node->parent_thread_pthread_create_ins = parent_thread_pthread_create_ins_num;
-        child_thread_record_root_node->parent_thread_pthread_create_order = pthread_create_counter;
+        child_thread_record_root_node->parent_thread_pthread_create_ins = parent_thread_pthread_create_ins_num;        
         child_thread_record_root_node->pin_assigned_parent_thread_ID = parent_thread_ID;
         child_thread_record_root_node->next = NULL;
     }
@@ -131,13 +131,10 @@ void MLOG::insertChildThreadRecordNode(
 
         tmpp->next = new child_thread_record_node;
         tmpp = tmpp->next;
-        tmpp->parent_thread_pthread_create_ins = parent_thread_pthread_create_ins_num;
-        tmpp->parent_thread_pthread_create_order = pthread_create_counter;
+        tmpp->parent_thread_pthread_create_ins = parent_thread_pthread_create_ins_num;        
         tmpp->pin_assigned_parent_thread_ID = parent_thread_ID;
         tmpp->next = NULL;
-    }
-
-    pthread_create_counter++;
+    }    
 
     PIN_MutexUnlock(&threadLockMutex);
 }
@@ -166,10 +163,7 @@ void MLOG::updateChildTHreadRecordNode(
     }
 
     tmpp->parent_thread_thread_start_ins = parent_thread_thread_start_ins_num;
-    tmpp->pin_assigned_thread_ID = assigned_thread_ID;
-    tmpp->parent_thread_thread_start_order = running_child_thread_counter;
-
-    running_child_thread_counter++; 
+    tmpp->pin_assigned_thread_ID = assigned_thread_ID;        
 
     PIN_MutexUnlock(&threadLockMutex);
 }
@@ -209,7 +203,7 @@ void MLOG::popSpaceInThreadCreation(UINT64 parent, UINT64 child)
     cout << "there 5" << endl;
     threadDependencyNode = threadDependencyNode->next;
 
-    insertThreadDependencyDB(child, parent, tmpp->instructionNumber, insNum);
+    // insertThreadDependencyDB(child, parent, tmpp->instructionNumber, insNum);
     // threadDependency << "Thread " 
     // << setw(5) << child 
     // << " started by thread " << setw(5) << parent << " with pthread_create"
@@ -230,7 +224,6 @@ INT32 Usage()
     return -1;
 }
 
-INT32 numThreads = 0;
 ostream* threadDependency = NULL;
 
 // Force each thread's data to be in its own data cache line so that
@@ -275,9 +268,9 @@ void BeginInstruction(VOID *ip, UINT32 op_code, THREADID threadid)
 
 void EndInstruction(THREADID threadid)
 {             
-    MLOG* mlog = static_cast<MLOG*>(PIN_GetThreadData( mlog_key, threadid));
+    //MLOG* mlog = static_cast<MLOG*>(PIN_GetThreadData( mlog_key, threadid));
     
-    fwrite(&(mlog->trace), sizeof(trace_instr_format_t), 1, mlog->traceFile);
+    //fwrite(&(mlog->trace), sizeof(trace_instr_format_t), 1, mlog->traceFile);
 }
 
 void Instruction(INS ins, VOID *v)
@@ -288,6 +281,7 @@ void Instruction(INS ins, VOID *v)
     
     INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)BeginInstruction, IARG_INST_PTR, IARG_UINT32, opcode, IARG_THREAD_ID, IARG_END);
 
+    /*
     // instrument branch instructions
     if(INS_IsBranch(ins))
         INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)BranchOrNot, IARG_BRANCH_TAKEN, IARG_THREAD_ID, IARG_END);
@@ -335,46 +329,85 @@ void Instruction(INS ins, VOID *v)
                     IARG_END);
         }
     }
+    */
 
     // finalize each instruction with this function
     INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)EndInstruction, IARG_THREAD_ID, IARG_END);
 }
 
+// Called when thread starts
+void ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
+{   
 
-// key for accessing TLS storage in the threads. initialized once in main()
-static  TLS_KEY tls_key = INVALID_TLS_KEY;
+cout << "Thread " << tid << " created"  << endl;
+    MLOG * mlog = new MLOG;
 
-// This function is called before every block
-VOID PIN_FAST_ANALYSIS_CALL docount(UINT32 c, THREADID threadid)
-{
-    thread_data_t* tdata = static_cast<thread_data_t*>(PIN_GetThreadData(tls_key, threadid));
-    tdata->_count += c;
-}
+    mlog->osid = PIN_GetTid();
 
-VOID ThreadStart(THREADID threadid, CONTEXT *ctxt, INT32 flags, VOID *v)
-{
-    numThreads++;
-    thread_data_t* tdata = new thread_data_t;
-    if (PIN_SetThreadData(tls_key, tdata, threadid) == FALSE)
+    // Set the parent thread ID
+    if (tid != 0)
+    {
+        mlog->parentThreadID = PIN_GetParentTid();
+    }
+    else
+    {
+        mlog->parentThreadID = 0;
+    }
+    
+    // const string traceFileName = "named_pipe_" + decstr(tid); // + decstr(getpid()) + "."
+    // mlog->traceFile = fopen(traceFileName.c_str(), "ab");
+
+    // if ( ! mlog->traceFile )
+    // {
+    //     cerr << "Error: could not open output trace file." << endl;
+    //     exit(1);
+    // }
+
+    mlog->insNum = 0;            
+
+    PIN_MutexInit(&mlog->threadLockMutex);
+
+    mlog->threadDependencyNode = NULL;
+
+    mlog->child_thread_record_root_node = NULL;
+
+    // A thread will need to look up its MLOG, so save pointer in TLS    
+    if (PIN_SetThreadData(mlog_key, mlog, tid) == FALSE)
     {
         cerr << "PIN_SetThreadData failed" << endl;
         PIN_ExitProcess(1);
-    }
+    }    
 }
 
+// Called when thread finishes
+void ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
+{       
+    // MLOG * mlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, tid));
 
-// Pin calls this function every time a new basic block is encountered.
-// It inserts a call to docount.
-VOID Trace(TRACE trace, VOID *v)
-{
-    // Visit every basic block  in the trace
-    for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl))
-    {
-        // Insert a call to docount for every bbl, passing the number of instructions.
+    // volatile MLOG * parentMlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, mlog->parentThreadID));
 
-        BBL_InsertCall(bbl, IPOINT_ANYWHERE, (AFUNPTR)docount, IARG_FAST_ANALYSIS_CALL,
-                       IARG_UINT32, BBL_NumIns(bbl), IARG_THREAD_ID, IARG_END);
-    }
+    // // // cout
+    // // // << "Thread " << setw(5) << tid 
+    // // // << " finished when thread " << setw(5) << mlog->parentThreadID 
+    // // // << " reaches instruction " << setw(12) << dec << parentMlog->insNum << endl;
+
+    // if (tid != 0)
+    // {
+    //     updateThreadDependencyDB(tid, parentMlog->insNum);
+    //     updateThreadDependencyDBTerminateInsCount(tid, mlog->insNum);
+    //     // threadDependency 
+    //     // << "Thread " << setw(5) << tid 
+    //     // << " finished when thread " << setw(5) << mlog->parentThreadID 
+    //     // << " reaches instruction " << setw(12) << dec << parentMlog->insNum << endl;
+    // }   
+    
+    // // fclose(mlog->traceFile);    
+
+    // // cout << "Thread " << setw(5) << tid << " finishes after " << setw(10) << mlog->insNum << " instructions" << endl;
+
+    // delete mlog;
+
+    cout << "Thread " << tid << " finished"  << endl;
 }
 
 // This function is called when the thread exits
@@ -416,8 +449,8 @@ int main(int argc, char * argv[])
     threadDependency = KnobOutputFile.Value().empty() ? &cout : new std::ofstream(KnobOutputFile.Value().c_str());
 
     // Obtain  a key for TLS storage.
-    tls_key = PIN_CreateThreadDataKey(NULL);
-    if (tls_key == INVALID_TLS_KEY)
+    mlog_key = PIN_CreateThreadDataKey(NULL);
+    if (mlog_key == INVALID_TLS_KEY)
     {
         cerr << "number of already allocated keys reached the MAX_CLIENT_TLS_KEYS limit" << endl;
         PIN_ExitProcess(1);
