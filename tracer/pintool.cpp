@@ -1,25 +1,34 @@
-/*
- * Copyright 2002-2019 Intel Corporation.
- * 
- * This software is provided to you as Sample Source Code as defined in the accompanying
- * End User License Agreement for the Intel(R) Software Development Products ("Agreement")
- * section 1.L.
- * 
- * This software and the related documents are provided as is, with no express or implied
- * warranties, other than those that are expressly stated in the License.
- */
-
 #include <iostream>
 #include <fstream>
+#include <map>
+
 #include "pin.H"
+
 using std::ostream;
 using std::cout;
 using std::cerr;
 using std::string;
 using std::endl;
+using std::map;
+using std::pair;
+using std::setw;
 
 // key for accessing TLS storage in the threads. initialized once in main()
 static  TLS_KEY mlog_key = INVALID_TLS_KEY;
+
+PIN_LOCK global_lock;
+
+map<UINT64, UINT64> threadMapDB;
+
+void insertThreadMapDB(UINT64 OSID, UINT64 PINID)
+{
+    threadMapDB.insert(pair<UINT64, UINT64>(OSID, PINID));
+}
+
+UINT64 queryThreadMapDB(UINT64 OSID)
+{
+    return threadMapDB.find(OSID)->second;
+}
 
 struct ThreadDependencyNode
 {
@@ -29,6 +38,39 @@ struct ThreadDependencyNode
     int start_order;
     struct ThreadDependencyNode* next;
 };
+
+struct threadDependencyRecord
+{
+    UINT64 parentThread;
+    UINT64 pthreadCreateTime;
+    UINT64 startTime;
+    UINT64 terminateTime;
+    UINT64 insCount;
+};
+
+map<UINT64, threadDependencyRecord> threadDependencyDB;
+
+void insertThreadDependencyDB(UINT64 childID, UINT64 parentID, UINT64 pthreadTime, UINT64 actualTime)
+{
+    threadDependencyRecord r;
+    r.parentThread = parentID;
+    r.pthreadCreateTime = pthreadTime;
+    r.startTime = actualTime;
+    r.terminateTime = 0;
+    r.insCount = 0;
+
+    threadDependencyDB.insert(pair<UINT64, threadDependencyRecord>(childID, r));
+}
+
+void updateThreadDependencyDB(UINT64 childID, UINT64 terminateInsCount)
+{
+    threadDependencyDB.find(childID)->second.terminateTime = terminateInsCount;
+}
+
+void updateThreadDependencyDBTerminateInsCount(UINT64 childID, UINT64 num)
+{
+    threadDependencyDB.find(childID)->second.insCount = num;
+}
 
 struct child_thread_record_node
 {
@@ -199,32 +241,31 @@ void MLOG::insertSpaceInThreadCreation()
 void MLOG::popSpaceInThreadCreation(UINT64 parent, UINT64 child)
 {
     PIN_MutexLock(&threadLockMutex);    
-    ThreadDependencyNode* tmpp = threadDependencyNode;
-    cout << "there 5" << endl;
-    threadDependencyNode = threadDependencyNode->next;
+    // ThreadDependencyNode* tmpp = threadDependencyNode;
+    // cout << "there 5" << endl;
+    // threadDependencyNode = threadDependencyNode->next;    
+    // // threadDependency << "Thread " 
+    // // << setw(5) << child 
+    // // << " started by thread " << setw(5) << parent << " with pthread_create"
+    // // << " at instruction " << setw(12) << dec << tmpp->instructionNumber 
+    // // << ", actually started at instruction " << setw(12) << insNum
+    // // << endl;
 
-    // insertThreadDependencyDB(child, parent, tmpp->instructionNumber, insNum);
-    // threadDependency << "Thread " 
-    // << setw(5) << child 
-    // << " started by thread " << setw(5) << parent << " with pthread_create"
-    // << " at instruction " << setw(12) << dec << tmpp->instructionNumber 
-    // << ", actually started at instruction " << setw(12) << insNum
-    // << endl;
+    // delete tmpp;
 
-    delete tmpp;
     PIN_MutexUnlock(&threadLockMutex);
+
+    PIN_GetLock(&global_lock, child);
+
+    insertThreadDependencyDB(child, parent, tmpp->instructionNumber, insNum);
+
+    PIN_ReleaseLock(&global_lock);
 }
 
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool",
     "o", "", "specify dependency record file name");
 
-INT32 Usage()
-{
-    cerr << "This Pintool prints the routine names and relavent information of each thread" << endl;
-    return -1;
-}
-
-ostream* threadDependency = NULL;
+// ostream threadDependency;
 
 // Force each thread's data to be in its own data cache line so that
 // multiple threads do not contend for the same data cache line.
@@ -342,17 +383,7 @@ void ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
 cout << "Thread " << tid << " created"  << endl;
     MLOG * mlog = new MLOG;
 
-    mlog->osid = PIN_GetTid();
-
-    // Set the parent thread ID
-    if (tid != 0)
-    {
-        mlog->parentThreadID = PIN_GetParentTid();
-    }
-    else
-    {
-        mlog->parentThreadID = 0;
-    }
+    mlog->osid = PIN_GetTid();    
     
     // const string traceFileName = "named_pipe_" + decstr(tid); // + decstr(getpid()) + "."
     // mlog->traceFile = fopen(traceFileName.c_str(), "ab");
@@ -376,7 +407,26 @@ cout << "Thread " << tid << " created"  << endl;
     {
         cerr << "PIN_SetThreadData failed" << endl;
         PIN_ExitProcess(1);
-    }    
+    }
+
+    PIN_GetLock(&global_lock, tid);
+
+    // Set the parent thread ID
+    if (tid != 0)
+    {
+        mlog->parentThreadID = queryThreadMapDB(PIN_GetParentTid());
+
+        MLOG* parentMlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, mlog->parentThreadID));
+        parentMlog->popSpaceInThreadCreation(mlog->parentThreadID, tid);
+    }
+    else
+    {
+        mlog->parentThreadID = 0;
+    }
+
+    insertThreadMapDB(PIN_GetTid(), tid);
+
+    PIN_ReleaseLock(&global_lock);
 }
 
 // Called when thread finishes
@@ -410,29 +460,90 @@ void ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
     cout << "Thread " << tid << " finished"  << endl;
 }
 
-// This function is called when the thread exits
-VOID ThreadFini(THREADID threadIndex, const CONTEXT *ctxt, INT32 code, VOID *v)
-{
-    thread_data_t* tdata = static_cast<thread_data_t*>(PIN_GetThreadData(tls_key, threadIndex));
-    *threadDependency << "Count[" << decstr(threadIndex) << "] = " << tdata->_count << endl;
-    delete tdata;
-}
+// called when the program being traced finishes
+void Fini(INT32 code, VOID *v)
+{   
+    cout << "Program finished" << endl;
+    // Dump the thread dependency information
+    cout << "============================================================================================================" << endl;
 
-// This function is called when the application exits
-VOID Fini(INT32 code, VOID *v)
-{
-    *threadDependency << "Total number of threads = " << numThreads << endl;
+    cout << "Child Thread    Parent Thread    pthread_create at    Thread Start    Thread Terminate    #Instructions Run" << endl;
+
+    cout << "------------------------------------------------------------------------------------------------------------" << endl;
+
+    // threadDependency << "Child Thread    Parent Thread    pthread_create at    Thread Start    Thread Terminate    #Instructions Run" << endl;
+
+    // threadDependency << "------------------------------------------------------------------------------------------------------------" << endl;
+    
+    map<UINT64, threadDependencyRecord>::iterator itR;
+    for (itR = threadDependencyDB.begin(); itR != threadDependencyDB.end(); ++itR) {
+        cout << setw(12) << itR->first << "    " 
+        << setw(13) << itR->second.parentThread << "    "
+        << setw(17) << itR->second.pthreadCreateTime << "    "
+        << setw(12) << itR->second.startTime << "    "
+        << setw(16) << itR->second.terminateTime  << "    "
+        << setw(17) << itR->second.insCount << endl;
+
+        // threadDependency << setw(12) << itR->first << "    " 
+        // << setw(13) << itR->second.parentThread << "    "
+        // << setw(17) << itR->second.pthreadCreateTime << "    "
+        // << setw(12) << itR->second.startTime << "    "
+        // << setw(16) << itR->second.terminateTime  << "    "
+        // << setw(17) << itR->second.insCount << endl;
+    }
+
+    // threadDependency.close();
+
+    // map<UINT64, UINT64>::iterator itr;
+
+    cout << "============================================================================================================" << endl;
+
+    cout << "OS thread ID    PIN thread ID " << endl;
+
+    cout << "------------------------------------------------------------------------------------------------------------" << endl;
+
+    // for (itr = threadMapDB.begin(); itr != threadMapDB.end(); ++itr) {
+    //     cout << setw(12) << itr->first << "    " << setw(13) << itr->second << '\n';
+    // }
+
+    cout << "============================================================================================================" << endl;
+
+    cout << "Parent thread ID  pthread_create order  start_thread order  Thread ID" << endl;
+
+    cout << "------------------------------------------------------------------------------------------------------------" << endl;
+
+    // for (itr = threadMapDB.begin(); itr != threadMapDB.end(); ++itr) {
+    //     MLOG *mlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, itr->second));
+
+    //     if (mlog->child_thread_record_root_node != NULL)
+    //     {
+    //         child_thread_record_node *tmpp = mlog->child_thread_record_root_node;
+
+    //         while (tmpp != NULL)
+    //         {
+    //             cout << setw(16) << tmpp->pin_assigned_parent_thread_ID
+    //             << setw(22) << tmpp->parent_thread_pthread_create_order
+    //             << setw(20) << tmpp->parent_thread_thread_start_order
+    //             << setw(11) << tmpp->pin_assigned_thread_ID
+    //             << endl;
+    //             tmpp = tmpp->next;
+    //         }
+    //     }
+        
+    // }
+
+    cout << "============================================================================================================" << endl;
+
+    cout << "The end!" << endl;  
 }
 
 /* ===================================================================== */
 /* Print Help Message                                                    */
 /* ===================================================================== */
-
 INT32 Usage()
 {
-    cerr << "This tool counts the number of dynamic instructions executed" << endl;
-    cerr << endl << KNOB_BASE::StringKnobSummary() << endl;
-    return 1;
+    cerr << "This Pintool prints the routine names and relavent information of each thread" << endl;
+    return -1;
 }
 
 /* ===================================================================== */
@@ -446,7 +557,7 @@ int main(int argc, char * argv[])
     if (PIN_Init(argc, argv))
         return Usage();
 
-    threadDependency = KnobOutputFile.Value().empty() ? &cout : new std::ofstream(KnobOutputFile.Value().c_str());
+    // threadDependency = KnobOutputFile.Value().empty() ? &cout : new std::ofstream(KnobOutputFile.Value().c_str());
 
     // Obtain  a key for TLS storage.
     mlog_key = PIN_CreateThreadDataKey(NULL);
@@ -455,6 +566,14 @@ int main(int argc, char * argv[])
         cerr << "number of already allocated keys reached the MAX_CLIENT_TLS_KEYS limit" << endl;
         PIN_ExitProcess(1);
     }
+
+    cout << "Size of MLOG = " << sizeof(MLOG) << endl;
+
+    // open the thread dependency file
+    // const string threadDependencyFileName = KnobOutputFile.Value() + ".txt";
+    // threadDependency.open(threadDependencyFileName.c_str());
+
+    PIN_InitLock(&global_lock);
 
     // Register ThreadStart to be called when a thread starts.
     PIN_AddThreadStartFunction(ThreadStart, NULL);
@@ -465,8 +584,8 @@ int main(int argc, char * argv[])
     // Register Fini to be called when the application exits.
     PIN_AddFiniFunction(Fini, NULL);
 
-    // Register Instruction to be called to instrument instructions.
-    TRACE_AddInstrumentFunction(Trace, NULL);
+    // routines to trace instructions
+    INS_AddInstrumentFunction(Instruction, NULL);
 
     // Start the program, never returns
     PIN_StartProgram();
