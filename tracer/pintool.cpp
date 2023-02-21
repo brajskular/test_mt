@@ -50,11 +50,11 @@ struct threadDependencyRecord
 
 map<UINT64, threadDependencyRecord> threadDependencyDB;
 
-void insertThreadDependencyDB(UINT64 childID, UINT64 parentID, UINT64 pthreadTime, UINT64 actualTime)
+void insertThreadDependencyDB(UINT64 childID, UINT64 parentID, UINT64 actualTime)
 {
     threadDependencyRecord r;
     r.parentThread = parentID;
-    r.pthreadCreateTime = pthreadTime;
+    r.pthreadCreateTime = 0; // pthreadTime;
     r.startTime = actualTime;
     r.terminateTime = 0;
     r.insCount = 0;
@@ -240,26 +240,26 @@ void MLOG::insertSpaceInThreadCreation()
 
 void MLOG::popSpaceInThreadCreation(UINT64 parent, UINT64 child)
 {
-    PIN_MutexLock(&threadLockMutex);    
-    // ThreadDependencyNode* tmpp = threadDependencyNode;
-    // cout << "there 5" << endl;
-    // threadDependencyNode = threadDependencyNode->next;    
-    // // threadDependency << "Thread " 
-    // // << setw(5) << child 
-    // // << " started by thread " << setw(5) << parent << " with pthread_create"
-    // // << " at instruction " << setw(12) << dec << tmpp->instructionNumber 
-    // // << ", actually started at instruction " << setw(12) << insNum
-    // // << endl;
+    // PIN_MutexLock(&threadLockMutex);    
+    // // ThreadDependencyNode* tmpp = threadDependencyNode;
+    // // cout << "there 5" << endl;
+    // // threadDependencyNode = threadDependencyNode->next;    
+    // // // threadDependency << "Thread " 
+    // // // << setw(5) << child 
+    // // // << " started by thread " << setw(5) << parent << " with pthread_create"
+    // // // << " at instruction " << setw(12) << dec << tmpp->instructionNumber 
+    // // // << ", actually started at instruction " << setw(12) << insNum
+    // // // << endl;
 
-    // delete tmpp;
+    // // delete tmpp;
 
-    PIN_MutexUnlock(&threadLockMutex);
+    // PIN_MutexUnlock(&threadLockMutex);
 
-    PIN_GetLock(&global_lock, child);
+    // PIN_GetLock(&global_lock, child);
 
-    insertThreadDependencyDB(child, parent, tmpp->instructionNumber, insNum);
+    insertThreadDependencyDB(child, parent, insNum);
 
-    PIN_ReleaseLock(&global_lock);
+    // PIN_ReleaseLock(&global_lock);
 }
 
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool",
@@ -432,24 +432,24 @@ cout << "Thread " << tid << " created"  << endl;
 // Called when thread finishes
 void ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
 {       
-    // MLOG * mlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, tid));
+    MLOG * mlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, tid));
 
-    // volatile MLOG * parentMlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, mlog->parentThreadID));
+    volatile MLOG * parentMlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, mlog->parentThreadID));
 
-    // // // cout
-    // // // << "Thread " << setw(5) << tid 
-    // // // << " finished when thread " << setw(5) << mlog->parentThreadID 
-    // // // << " reaches instruction " << setw(12) << dec << parentMlog->insNum << endl;
+    // cout
+    // << "Thread " << setw(5) << tid 
+    // << " finished when thread " << setw(5) << mlog->parentThreadID 
+    // << " reaches instruction " << setw(12) << dec << parentMlog->insNum << endl;
 
-    // if (tid != 0)
-    // {
-    //     updateThreadDependencyDB(tid, parentMlog->insNum);
-    //     updateThreadDependencyDBTerminateInsCount(tid, mlog->insNum);
-    //     // threadDependency 
-    //     // << "Thread " << setw(5) << tid 
-    //     // << " finished when thread " << setw(5) << mlog->parentThreadID 
-    //     // << " reaches instruction " << setw(12) << dec << parentMlog->insNum << endl;
-    // }   
+    if (tid != 0)
+    {
+        updateThreadDependencyDB(tid, parentMlog->insNum);
+        updateThreadDependencyDBTerminateInsCount(tid, mlog->insNum);
+        // threadDependency 
+        // << "Thread " << setw(5) << tid 
+        // << " finished when thread " << setw(5) << mlog->parentThreadID 
+        // << " reaches instruction " << setw(12) << dec << parentMlog->insNum << endl;
+    }   
     
     // // fclose(mlog->traceFile);    
 
@@ -494,7 +494,7 @@ void Fini(INT32 code, VOID *v)
 
     // threadDependency.close();
 
-    // map<UINT64, UINT64>::iterator itr;
+    map<UINT64, UINT64>::iterator itr;
 
     cout << "============================================================================================================" << endl;
 
@@ -502,9 +502,9 @@ void Fini(INT32 code, VOID *v)
 
     cout << "------------------------------------------------------------------------------------------------------------" << endl;
 
-    // for (itr = threadMapDB.begin(); itr != threadMapDB.end(); ++itr) {
-    //     cout << setw(12) << itr->first << "    " << setw(13) << itr->second << '\n';
-    // }
+    for (itr = threadMapDB.begin(); itr != threadMapDB.end(); ++itr) {
+        cout << setw(12) << itr->first << "    " << setw(13) << itr->second << '\n';
+    }
 
     cout << "============================================================================================================" << endl;
 
