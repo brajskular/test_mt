@@ -1,4 +1,7 @@
 pin*/
 *.out
 tracer/obj-intel64
-scratch/
+scratch/*
+!scratch/attach_xz.sh
+!scratch/clean_trace.sh
+!scratch/create_named_pipe.sh

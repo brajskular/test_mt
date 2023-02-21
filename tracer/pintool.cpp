@@ -4,7 +4,7 @@
 
 #include "pin.H"
 
-using std::ostream;
+using std::ofstream;
 using std::cout;
 using std::cerr;
 using std::string;
@@ -122,13 +122,9 @@ class MLOG
 
     ThreadDependencyNode* threadDependencyNode;
 
-    UINT32 threadCounter;
-
     PIN_MUTEX threadLockMutex;    
 
     child_thread_record_node *child_thread_record_root_node;
-
-    UINT64 osid;
 
     UINT8 _pad[PAD_SIZE];
 
@@ -265,7 +261,7 @@ void MLOG::popSpaceInThreadCreation(UINT64 parent, UINT64 child)
 KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool",
     "o", "", "specify dependency record file name");
 
-// ostream threadDependency;
+ofstream threadDependency;
 
 // Force each thread's data to be in its own data cache line so that
 // multiple threads do not contend for the same data cache line.
@@ -309,25 +305,160 @@ void BeginInstruction(VOID *ip, UINT32 op_code, THREADID threadid)
 
 void EndInstruction(THREADID threadid)
 {             
-    //MLOG* mlog = static_cast<MLOG*>(PIN_GetThreadData( mlog_key, threadid));
+    MLOG* mlog = static_cast<MLOG*>(PIN_GetThreadData( mlog_key, threadid));
     
-    //fwrite(&(mlog->trace), sizeof(trace_instr_format_t), 1, mlog->traceFile);
+    fwrite(&(mlog->trace), sizeof(trace_instr_format_t), 1, mlog->traceFile);
+}
+
+void BranchOrNot(UINT32 taken, THREADID threadid)
+{       
+    MLOG* mlog = static_cast<MLOG*>(PIN_GetThreadData( mlog_key, threadid));
+
+    mlog->trace.is_branch = 1;
+
+    if(taken != 0)
+    {
+        mlog->trace.branch_taken = 1;        
+    }
+}
+
+void RegRead(UINT32 i, UINT32 index, THREADID threadid)
+{          
+    MLOG* mlog = static_cast<MLOG*>(PIN_GetThreadData( mlog_key, threadid));
+
+    REG r = (REG)i;   
+
+    // check to see if this register is already in the list
+    int already_found = 0;
+    for(int i=0; i<NUM_INSTR_SOURCES; i++)
+    {
+        if(mlog->trace.source_registers[i] == ((unsigned char)r))
+        {
+            already_found = 1;
+            break;
+        }
+    }
+    if(already_found == 0)
+    {
+        for(int i=0; i<NUM_INSTR_SOURCES; i++)
+        {
+            if(mlog->trace.source_registers[i] == 0)
+            {
+                mlog->trace.source_registers[i] = (unsigned char)r;
+                break;
+            }
+        }
+    }    
+}
+
+void RegWrite(REG i, UINT32 index, THREADID threadid)
+{          
+    MLOG* mlog = static_cast<MLOG*>(PIN_GetThreadData( mlog_key, threadid));
+
+    REG r = (REG)i;
+
+    /*
+    if(r == 26)
+    {
+    // 26 is the IP, which is read and written by branches
+    return;
+    }
+    */
+
+    //cout << "<" << r << " " << REG_StringShort((REG)r) << "> ";
+    //cout << "<" << REG_StringShort((REG)r) << "> ";
+
+    //printf("<%d> ", (int)r);
+
+    int already_found = 0;
+    for(int i=0; i<NUM_INSTR_DESTINATIONS; i++)
+    {
+        if(mlog->trace.destination_registers[i] == ((unsigned char)r))
+        {
+            already_found = 1;
+            break;
+        }
+    }
+    if(already_found == 0)
+    {
+        for(int i=0; i<NUM_INSTR_DESTINATIONS; i++)
+        {
+            if(mlog->trace.destination_registers[i] == 0)
+            {
+                mlog->trace.destination_registers[i] = (unsigned char)r;
+                break;
+            }
+        }
+    }       
+}
+
+void MemoryRead(VOID* addr, UINT32 index, UINT32 read_size, THREADID threadid)
+{         
+    MLOG* mlog = static_cast<MLOG*>(PIN_GetThreadData( mlog_key, threadid));
+
+    // check to see if this memory read location is already in the list
+    int already_found = 0;
+    for(int i=0; i<NUM_INSTR_SOURCES; i++)
+    {
+        if(mlog->trace.source_memory[i] == ((unsigned long long int)addr))
+        {
+            already_found = 1;
+            break;
+        }
+    }
+    if(already_found == 0)
+    {
+        for(int i=0; i<NUM_INSTR_SOURCES; i++)
+        {
+            if(mlog->trace.source_memory[i] == 0)
+            {
+                mlog->trace.source_memory[i] = (unsigned long long int)addr;
+                break;
+            }
+        }
+    }
+}
+
+void MemoryWrite(VOID* addr, UINT32 index, THREADID threadid)
+{               
+    MLOG* mlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, threadid));
+
+    // check to see if this memory write location is already in the list
+    int already_found = 0;
+    for(int i=0; i<NUM_INSTR_DESTINATIONS; i++)
+    {
+        if(mlog->trace.destination_memory[i] == ((unsigned long long int)addr))
+        {
+            already_found = 1;
+            break;
+        }
+    }
+    if(already_found == 0)
+    {
+        for(int i=0; i<NUM_INSTR_DESTINATIONS; i++)
+        {
+            if(mlog->trace.destination_memory[i] == 0)
+            {
+                mlog->trace.destination_memory[i] = (unsigned long long int)addr;
+                break;
+            }
+        }
+    }      
 }
 
 void Instruction(INS ins, VOID *v)
 {
-    // numberOfInstructionsFound++;
     // begin each instruction with this function
     UINT32 opcode = INS_Opcode(ins);
     
     INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)BeginInstruction, IARG_INST_PTR, IARG_UINT32, opcode, IARG_THREAD_ID, IARG_END);
 
-    /*
+    
     // instrument branch instructions
     if(INS_IsBranch(ins))
         INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)BranchOrNot, IARG_BRANCH_TAKEN, IARG_THREAD_ID, IARG_END);
 
-    // // instrument register reads
+    // instrument register reads
     UINT32 readRegCount = INS_MaxNumRRegs(ins);
     for(UINT32 i=0; i<readRegCount; i++) 
     {
@@ -338,7 +469,7 @@ void Instruction(INS ins, VOID *v)
                 IARG_END);
     }
 
-    // // instrument register writes
+    // instrument register writes
     UINT32 writeRegCount = INS_MaxNumWRegs(ins);
     for(UINT32 i=0; i<writeRegCount; i++) 
     {
@@ -349,10 +480,10 @@ void Instruction(INS ins, VOID *v)
                 IARG_END);
     }
 
-    // // instrument memory reads and writes
+    // instrument memory reads and writes
     UINT32 memOperands = INS_MemoryOperandCount(ins);
 
-    // // Iterate over each memory operand of the instruction.
+    // Iterate over each memory operand of the instruction.
     for (UINT32 memOp = 0; memOp < memOperands; memOp++) 
     {
         if (INS_MemoryOperandIsRead(ins, memOp)) 
@@ -369,30 +500,25 @@ void Instruction(INS ins, VOID *v)
                     IARG_MEMORYOP_EA, memOp, IARG_UINT32, memOp, IARG_THREAD_ID,
                     IARG_END);
         }
-    }
-    */
+    }    
 
     // finalize each instruction with this function
     INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)EndInstruction, IARG_THREAD_ID, IARG_END);
 }
 
-// Called when thread starts
+// called when thread starts
 void ThreadStart(THREADID tid, CONTEXT *ctxt, INT32 flags, VOID *v)
 {   
-
-cout << "Thread " << tid << " created"  << endl;
     MLOG * mlog = new MLOG;
-
-    mlog->osid = PIN_GetTid();    
     
-    // const string traceFileName = "named_pipe_" + decstr(tid); // + decstr(getpid()) + "."
-    // mlog->traceFile = fopen(traceFileName.c_str(), "ab");
+    const string traceFileName = "named_pipe_" + decstr(tid); // + decstr(getpid()) + "."
+    mlog->traceFile = fopen(traceFileName.c_str(), "ab");
 
-    // if ( ! mlog->traceFile )
-    // {
-    //     cerr << "Error: could not open output trace file." << endl;
-    //     exit(1);
-    // }
+    if ( ! mlog->traceFile )
+    {
+        cerr << "Error: could not open output trace file." << endl;
+        exit(1);
+    }
 
     mlog->insNum = 0;            
 
@@ -436,103 +562,65 @@ void ThreadFini(THREADID tid, const CONTEXT *ctxt, INT32 code, VOID *v)
 
     volatile MLOG * parentMlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, mlog->parentThreadID));
 
-    // cout
-    // << "Thread " << setw(5) << tid 
-    // << " finished when thread " << setw(5) << mlog->parentThreadID 
-    // << " reaches instruction " << setw(12) << dec << parentMlog->insNum << endl;
-
     if (tid != 0)
     {
         updateThreadDependencyDB(tid, parentMlog->insNum);
         updateThreadDependencyDBTerminateInsCount(tid, mlog->insNum);
-        // threadDependency 
-        // << "Thread " << setw(5) << tid 
-        // << " finished when thread " << setw(5) << mlog->parentThreadID 
-        // << " reaches instruction " << setw(12) << dec << parentMlog->insNum << endl;
     }   
     
-    // // fclose(mlog->traceFile);    
+    fclose(mlog->traceFile);
 
-    // // cout << "Thread " << setw(5) << tid << " finishes after " << setw(10) << mlog->insNum << " instructions" << endl;
-
-    // delete mlog;
-
-    cout << "Thread " << tid << " finished"  << endl;
+    // delete mlog;    
 }
 
 // called when the program being traced finishes
 void Fini(INT32 code, VOID *v)
-{   
-    cout << "Program finished" << endl;
+{           
     // Dump the thread dependency information
-    cout << "============================================================================================================" << endl;
+    cout << "======================================================================================================" << endl;
 
-    cout << "Child Thread    Parent Thread    pthread_create at    Thread Start    Thread Terminate    #Instructions Run" << endl;
+    cout << "Child Thread    Parent Thread    Thread Start    Thread Terminate    #Instructions Run" << endl;
 
-    cout << "------------------------------------------------------------------------------------------------------------" << endl;
+    cout << "------------------------------------------------------------------------------------------------------" << endl;
 
-    // threadDependency << "Child Thread    Parent Thread    pthread_create at    Thread Start    Thread Terminate    #Instructions Run" << endl;
+    threadDependency << "======================================================================================================" << endl;
 
-    // threadDependency << "------------------------------------------------------------------------------------------------------------" << endl;
+    threadDependency << "Child Thread    Parent Thread    Thread Start    Thread Terminate    #Instructions Run" << endl;
+
+    threadDependency << "------------------------------------------------------------------------------------------------------" << endl;
     
     map<UINT64, threadDependencyRecord>::iterator itR;
     for (itR = threadDependencyDB.begin(); itR != threadDependencyDB.end(); ++itR) {
         cout << setw(12) << itR->first << "    " 
         << setw(13) << itR->second.parentThread << "    "
-        << setw(17) << itR->second.pthreadCreateTime << "    "
         << setw(12) << itR->second.startTime << "    "
         << setw(16) << itR->second.terminateTime  << "    "
         << setw(17) << itR->second.insCount << endl;
 
-        // threadDependency << setw(12) << itR->first << "    " 
-        // << setw(13) << itR->second.parentThread << "    "
-        // << setw(17) << itR->second.pthreadCreateTime << "    "
-        // << setw(12) << itR->second.startTime << "    "
-        // << setw(16) << itR->second.terminateTime  << "    "
-        // << setw(17) << itR->second.insCount << endl;
-    }
+        threadDependency << setw(12) << itR->first << "    " 
+        << setw(13) << itR->second.parentThread << "    "        
+        << setw(12) << itR->second.startTime << "    "
+        << setw(16) << itR->second.terminateTime  << "    "
+        << setw(17) << itR->second.insCount << endl;
+    }    
 
-    // threadDependency.close();
+    threadDependency << "======================================================================================================" << endl;
+
+    threadDependency << "Thread 0 instruction count " << static_cast<MLOG*>(PIN_GetThreadData(mlog_key, 0))->insNum << endl;
+
+    threadDependency << "======================================================================================================" << endl;
+
+    threadDependency << "The end!" << endl;  
+
+    threadDependency.close();
 
     map<UINT64, UINT64>::iterator itr;
 
-    cout << "============================================================================================================" << endl;
+    cout << "======================================================================================================" << endl;
 
-    cout << "OS thread ID    PIN thread ID " << endl;
+    cout << "Thread 0 instruction count " << static_cast<MLOG*>(PIN_GetThreadData(mlog_key, 0))->insNum << endl;
 
-    cout << "------------------------------------------------------------------------------------------------------------" << endl;
-
-    for (itr = threadMapDB.begin(); itr != threadMapDB.end(); ++itr) {
-        cout << setw(12) << itr->first << "    " << setw(13) << itr->second << '\n';
-    }
-
-    cout << "============================================================================================================" << endl;
-
-    cout << "Parent thread ID  pthread_create order  start_thread order  Thread ID" << endl;
-
-    cout << "------------------------------------------------------------------------------------------------------------" << endl;
-
-    // for (itr = threadMapDB.begin(); itr != threadMapDB.end(); ++itr) {
-    //     MLOG *mlog = static_cast<MLOG*>(PIN_GetThreadData(mlog_key, itr->second));
-
-    //     if (mlog->child_thread_record_root_node != NULL)
-    //     {
-    //         child_thread_record_node *tmpp = mlog->child_thread_record_root_node;
-
-    //         while (tmpp != NULL)
-    //         {
-    //             cout << setw(16) << tmpp->pin_assigned_parent_thread_ID
-    //             << setw(22) << tmpp->parent_thread_pthread_create_order
-    //             << setw(20) << tmpp->parent_thread_thread_start_order
-    //             << setw(11) << tmpp->pin_assigned_thread_ID
-    //             << endl;
-    //             tmpp = tmpp->next;
-    //         }
-    //     }
-        
-    // }
-
-    cout << "============================================================================================================" << endl;
+    cout << "======================================================================================================" << endl;
 
     cout << "The end!" << endl;  
 }
@@ -557,8 +645,6 @@ int main(int argc, char * argv[])
     if (PIN_Init(argc, argv))
         return Usage();
 
-    // threadDependency = KnobOutputFile.Value().empty() ? &cout : new std::ofstream(KnobOutputFile.Value().c_str());
-
     // Obtain  a key for TLS storage.
     mlog_key = PIN_CreateThreadDataKey(NULL);
     if (mlog_key == INVALID_TLS_KEY)
@@ -570,8 +656,8 @@ int main(int argc, char * argv[])
     cout << "Size of MLOG = " << sizeof(MLOG) << endl;
 
     // open the thread dependency file
-    // const string threadDependencyFileName = KnobOutputFile.Value() + ".txt";
-    // threadDependency.open(threadDependencyFileName.c_str());
+    const string threadDependencyFileName = KnobOutputFile.Value();
+    threadDependency.open(threadDependencyFileName.c_str());
 
     PIN_InitLock(&global_lock);
 

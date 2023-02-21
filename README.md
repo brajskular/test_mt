@@ -32,3 +32,30 @@ export PIN_ROOT=<path to Intel Pin directory>
 $PIN_ROOT/pin -t obj-intel64/champsim_tracer.so -o <output file name> -- <script to start program>
 ```
 
+Change `PATH` and `PIN_ROOT` environmental variables in `./env.sh` based on where Intel Pin is located.
+
+# Scripts
+
+Always run `source env.sh` before compiling or running the pintool.
+
+Change directory to `./scratch`.
+
+Run 
+
+```
+./create_named_pipe.sh
+./attach_xz.sh
+(./clean_trace cleans the named pipes. Do not clean the named pipes before tracing.)
+```
+
+Change directory back to `./`
+
+Run
+
+```
+./run_pin_tool.sh
+```
+
+Files in `./scratch` end with `.xz` are the Champsim trace files.
+
+`./scratch/dependency.txt` includes information on the ordering and dependency of threads which is printed out in the terminal while tracing.
