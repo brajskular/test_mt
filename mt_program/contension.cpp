@@ -3,8 +3,9 @@
 #include <stdlib.h>
 #include <mutex>
 #include <time.h>
+#include </home/pakalapati/snipersim/include/sim_api.h>
 
-#define DIMENSION 50
+#define DIMENSION 5000
 
 using std::thread;
 using std::mutex;
@@ -16,6 +17,16 @@ int **arrayB;
 int **arrayC;
 
 int counter = 0;
+
+void samuel_start_roi()
+{
+    printf("Start ROI\n");
+}
+
+void samuel_end_roi()
+{
+    printf("End ROI\n");
+}
 
 void matrixMultiplication()
 {
@@ -45,6 +56,17 @@ void matrixMultiplication()
 }
 
 void spawnThreads()
+{
+    thread t1(matrixMultiplication);
+    thread t2(matrixMultiplication);
+    thread t3(matrixMultiplication);
+    
+    t1.join();
+    t2.join();
+    t3.join();    
+}
+
+void sample_this()
 {
     thread t1(matrixMultiplication);
     thread t2(matrixMultiplication);
@@ -99,6 +121,41 @@ int main()
     t1.join();
     t2.join();
     t3.join();
+
+// for(int i=0; i<1000; i++)
+//    {
+//     thread t1(spawnThreads);
+//     thread t2(spawnThreads);
+//     thread t3(spawnThreads);
+    
+//     t1.join();
+//     t2.join();
+//     t3.join();
+//    }
+
+sample_this();
+sample_this();
+sample_this();
+sample_this();
+sample_this();
+sample_this();
+sample_this();
+
+// samuel_start_roi();
+SimRoiStart();
+
+sample_this();
+sample_this();
+sample_this();
+sample_this();
+sample_this();
+sample_this();
+sample_this();
+sample_this();
+sample_this();
+
+// samuel_end_roi();
+SimRoiEnd();
 
     // free memory
     for (int i = 0; i < DIMENSION; i++)
